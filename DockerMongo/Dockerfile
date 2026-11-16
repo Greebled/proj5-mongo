@@ -1,5 +1,5 @@
 FROM python:3.9-slim
-LABEL maintainer="Your Name <you@example.com>"
+LABEL maintainer="Jasper Riggs <jasr@uoregon.edu>"
 
 # Show print/log output immediately in `docker compose logs`
 ENV PYTHONUNBUFFERED=1
