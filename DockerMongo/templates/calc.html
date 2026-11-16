@@ -21,10 +21,11 @@
   <script 
     src="{{ url_for('static', filename="js/moment.min.js") }}"></script>
 
-</head>
+  <!-- Our own style sheet -->
+  <link rel="stylesheet"
+    href="{{ url_for('static', filename='css/calc.css') }}" />
 
-   <!-- Our own style sheet -->
-   <link rel="stylesheet" href="/static/css/calc.css" />
+</head>
 
 <body>
 <!-- bootstrap requires a 'container' div around content -->
@@ -110,6 +111,15 @@
   </table>
   </div> <!-- col -->
   </div> <!-- row -->
+
+  <div class="row">
+  <div class="col-md-12">
+    <!-- type="button" so they don't submit the form and reload the page -->
+    <button type="button" id="submit_btn" class="btn btn-primary">Submit</button>
+    <button type="button" id="display_btn" class="btn btn-default">Display</button>
+    <div id="status_msg" role="status" style="margin-top: 10px;"></div>
+  </div>
+  </div> <!-- row -->
 </form>
 
 <script type="text/javascript">
@@ -117,26 +127,25 @@
   var SCRIPT_ROOT = {{ request.script_root|tojson|safe }} ;
   var TIME_CALC_URL = SCRIPT_ROOT + "/_calc_times";
 
-  // Pass calctimes a <td> element containing the data for a control.
-  // It extracts the distance and calls the server to get times to
-  // fill in open and close times in a human-readable format.
-  // (If we want to also keep the ISO-formatted times, we'll need to
-  // stash them in hidden fields.) 
+  // Pass calc_times a jQuery <tr> element containing one control.
+  // It sends the control distance, brevet distance and start time to
+  // the server and fills in the open and close times, or shows the
+  // server's error message in the Notes column.
   function calc_times(control) {
     var km = control.find("input[name='km']").val();
     var open_time_field = control.find("input[name='open']");
     var close_time_field = control.find("input[name='close']");
     var notes = control.find("td.notes");
 
-    if ($.trim(km) === "") { //row cleared: clear its times
+    if ($.trim(km) === "") {          // Row cleared: clear its times
       open_time_field.val("");
       close_time_field.val("");
       notes.html("&nbsp;");
       return;
     }
-    
-    $.getJSON(TIME_CALC_URL, { 
-      km: km,
+
+    $.getJSON(TIME_CALC_URL, {
+        km: km,
         brevet_dist_km: $("#brevet_dist_km").val(),
         begin_date: $("#begin_date").val(),
         begin_time: $("#begin_time").val()
@@ -149,6 +158,8 @@
           return;
         }
         var times = data.result;
+        // Use only "YYYY-MM-DDTHH:mm:ss" so the browser does not
+        // convert the time to its own time zone.
         open_time_field.val(moment(times.open.substring(0, 19)).format("ddd M/D H:mm"));
         close_time_field.val(moment(times.close.substring(0, 19)).format("ddd M/D H:mm"));
         notes.text(times.note || "");
@@ -157,7 +168,8 @@
         notes.text("Could not reach the server");
       });
   }
-  //recalculate every row that has a distance
+
+  // Recalculate every row that has a distance
   function recalc_all() {
     $(".control").each(function() {
       if ($.trim($(this).find("input[name='km']").val()) !== "") {
@@ -166,33 +178,99 @@
     });
   }
 
+  var SUBMIT_URL = SCRIPT_ROOT + "/_submit_brevet";
+  var DISPLAY_URL = SCRIPT_ROOT + "/display";
+
+  function show_status(text, ok) {
+    $("#status_msg")
+      .removeClass("alert-success alert-danger")
+      .addClass("alert " + (ok ? "alert-success" : "alert-danger"))
+      .text(text);
+  }
+
+  // Every row with a distance or a location, with its row number so
+  // the server can say which row has a problem.
+  function collect_controls() {
+    var controls = [];
+    $(".control").each(function(i) {
+      var km = $.trim($(this).find("input[name='km']").val());
+      var loc = $.trim($(this).find("input[name='location']").val());
+      if (km !== "" || loc !== "") {
+        controls.push({ row: i + 1, km: km, location: loc });
+      }
+    });
+    return controls;
+  }
+
+  function submit_brevet() {
+    var controls = collect_controls();
+    if (controls.length === 0) {
+      show_status("There are no controls to submit. " +
+                  "Enter at least one control distance.", false);
+      return;
+    }
+    var button = $("#submit_btn");
+    button.prop("disabled", true);   // no double submissions
+    $.ajax({
+      url: SUBMIT_URL,
+      type: "POST",
+      contentType: "application/json",
+      dataType: "json",
+      data: JSON.stringify({
+        brevet_dist_km: $("#brevet_dist_km").val(),
+        begin_date: $("#begin_date").val(),
+        begin_time: $("#begin_time").val(),
+        controls: controls
+      })
+    })
+    .done(function(data) {
+      show_status(data.message + " Click Display to see saved brevets.", true);
+    })
+    .fail(function(jqXHR) {
+      var msg = "Could not reach the server.";
+      try { msg = JSON.parse(jqXHR.responseText).error || msg; }
+      catch (e) { /* not JSON; keep the generic message */ }
+      show_status(msg, false);
+    })
+    .always(function() {
+      button.prop("disabled", false);
+    });
+  }
+
   $(document).ready(function(){
    // Do the following when the page is finished loading
 
+      // Pressing Enter in a field would otherwise submit the form and
+      // reload the page, losing everything entered.
+      $("form").submit(function(e) { e.preventDefault(); });
+
+      $("#submit_btn").click(submit_brevet);
+      $("#display_btn").click(function() {
+        window.location.href = DISPLAY_URL;
+      });
+
       $('input[name="miles"]').change(
-        function() {
-          var control_entry = $(this).parents(".control");
-          var target = control_entry.find("input[name='km']");
-          var miles = parseFloat($(this).val());
-          target.val(isNaN(miles) ? "" : (1.609344 * miles).toFixed(1));
-          // Then calculate times for this entry
-          calc_times(control_entry);
-        });
+         function() {
+             var control_entry = $(this).parents(".control");
+             var target = control_entry.find("input[name='km']");
+             var miles = parseFloat($(this).val());
+             target.val(isNaN(miles) ? "" : (1.609344 * miles).toFixed(1));
+             calc_times(control_entry);
+          });
 
       $('input[name="km"]').change(
-        function() {
-          var control_entry = $(this).parents(".control");
-          var target = control_entry.find("input[name='miles']");
-          var km = parseFloat($(this).val());
-          target.val(isNaN(km) ? "" : (0.621371 * km).toFixed(1));
-          // Then calculate times for this entry
-          calc_times(control_entry);
-        });
-      
-      //changing the brevet or its start changes every control's times
+         function() {
+             var control_entry = $(this).parents(".control");
+             var target = control_entry.find("input[name='miles']");
+             var km = parseFloat($(this).val());
+             target.val(isNaN(km) ? "" : (0.621371 * km).toFixed(1));
+             calc_times(control_entry);
+          });
+
+      // Changing the brevet or its start changes every control's times
       $("#brevet_dist_km, #begin_date, #begin_time").change(recalc_all);
 
-    });   // end of what we do on document ready
+     });   // end of what we do on document ready
 
 </script>
 
